@@ -1,0 +1,4 @@
+# Public phone login authenticates the submitted password through Auth itself.
+# No pre-existing user JWT is required to reach this login endpoint.
+[functions.jtg-phone-login]
+verify_jwt = false
