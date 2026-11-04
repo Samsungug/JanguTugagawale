@@ -164,7 +164,10 @@ $f$;
 -- Change approval metadata only; the 5% inviter and 2.5% invitee referral bonuses are retained.
 do $approval$
 begin
-  execute replace(pg_get_functiondef('public.jtg_decide_payment(uuid,text)'::regprocedure),'r.price*0.025','r.price*0.033');
+  -- Target daily-rate metadata only; never replace the invitee's one-time 2.5% reward.
+  execute replace(pg_get_functiondef('public.jtg_decide_payment(uuid,text)'::regprocedure),
+    'greatest(1,round(r.price*0.025)::bigint)',
+    'greatest(1,round(r.price*0.033)::bigint)');
 end;
 $approval$;
 
