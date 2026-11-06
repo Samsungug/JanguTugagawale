@@ -52,6 +52,8 @@ const categoryDefinitions=[{name:'Starter',ids:[0,1,2,3,4]},{name:'Growth',ids:[
 let incomingReferral='',inviterName='',signupDraft=null,cloudSession=null,session=null,authBusy=false,syncTask=null,recoveryVerified=false,rememberedPhone='',rememberedAccount=null,authGeneration=0,connectionIssue='',categoryQuery='';
 let db={users:[],payments:[],products:[],withdrawals:[],referralCredits:[]},wallets={},withdrawalLimits=null,financialReady=false,serverOffset=0;
 let route='home',authMode='landing',filter='All',productFilter='Current',toastTimer,selectedPackageId=null;
+let authUncertain=false,knownMemberId=null;
+const EXPLICIT_LOGOUT_KEY='jtg-explicit-signout';
 let workspace={advert:null,threads:[],messages:[]},supportUserId=null,workspaceRequest=0,workspaceTask=null,careError='',advertDraft='';
 const markedSupport=new Map(),supportDrafts=new Map(),viewDrafts=new Map();
 const app=document.getElementById('app'),modal=document.getElementById('modal'),day=86400000;
@@ -77,7 +79,7 @@ const referralBonuses=id=>Number(wallet(id).referralBonuses);
 const acceptedPayments=()=>db.payments.filter(p=>p.status==='Approved');
 function restoreRoute(hash,isAdmin){selectedPackageId=null;if(isAdmin){route=hash.startsWith('admin/')&&adminNav.some(n=>n[0]===hash.slice(6))?hash.slice(6):'overview';return;}const payment=hash.match(/^invest\/(\d+)$/);if(payment&&packages.some(p=>p.id===Number(payment[1]))){route='invest';selectedPackageId=Number(payment[1]);return;}route=navItems.some(n=>n[0]===hash)||hash==='customer-care'?hash:'home';}
 const routeHash=()=>session?.admin?'admin/'+route:route==='invest'&&selectedPackageId!==null?'invest/'+selectedPackageId:route;
-function clearFinancialState(){financialReady=false;wallets={};withdrawalLimits=null;db={users:[],payments:[],products:[],withdrawals:[],referralCredits:[]};workspace={advert:null,threads:[],messages:[]};supportUserId=null;workspaceRequest++;markedSupport.clear();supportDrafts.clear();viewDrafts.clear();advertDraft='';careError='';}
+function clearFinancialState(){financialReady=false;authUncertain=false;knownMemberId=null;wallets={};withdrawalLimits=null;db={users:[],payments:[],products:[],withdrawals:[],referralCredits:[]};workspace={advert:null,threads:[],messages:[]};supportUserId=null;workspaceRequest++;markedSupport.clear();supportDrafts.clear();viewDrafts.clear();advertDraft='';careError='';}
 try{rememberedPhone=localStorage.getItem(LOGIN_PHONE_KEY)||'';const saved=JSON.parse(localStorage.getItem(ACCOUNT_KEY)||'null');if(saved&&typeof saved.phone==='string'&&typeof saved.email==='string')rememberedAccount=saved;}catch{}
 function rememberLoginPhone(phone){rememberedPhone=phone;try{localStorage.setItem(LOGIN_PHONE_KEY,phone);}catch{}}
 function rememberAccount(member,user){rememberLoginPhone(member.phone);rememberedAccount={phone:member.phone,name:member.name,email:user.email||''};try{localStorage.setItem(ACCOUNT_KEY,JSON.stringify(rememberedAccount));}catch{}}
@@ -108,11 +110,11 @@ function sectionHead(eyebrow,title,description,right=''){return `<div class="mb-
 function stat(label,val,i,sub='',dark=false){return `<div class="min-w-0 rounded-2xl border ${dark?'border-slate-700 bg-ink':'border-slate-200 bg-card'} p-5"><div class="mb-5 flex items-center justify-between gap-3"><span class="text-xs text-muted">${label}</span><span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue">${icon(i,'text-xs')}</span></div><p class="break-words font-display text-2xl font-extrabold tracking-tight">${val}</p><p class="mt-2 text-[11px] leading-relaxed text-muted">${sub}</p></div>`;}
 function brand(small=false){return `<div class="flex items-center gap-3"><span class="flex ${small?'h-9 w-9':'h-11 w-11'} shrink-0 items-center justify-center rounded-xl bg-blue text-white">${icon('chart-simple','text-lg')}</span><div><p class="font-display ${small?'text-[13px]':'text-sm'} font-extrabold tracking-wide">JANGU TUGAGAWALE</p><p class="mt-0.5 text-[10px] font-medium tracking-[0.16em] text-slate-500">GROW WITH PURPOSE</p></div></div>`;}
 function androidDownloadSection(){return `<section aria-label="Download our Android app" class="mb-7 flex w-full flex-col items-center gap-2 text-center"><a href="https://jangutugagawale.ink/app-release.apk" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-12 w-full max-w-[280px] items-center justify-center gap-3 rounded-xl border border-green-700 bg-[#15803D] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#166534] active:bg-[#14532D] focus-visible:outline-green-400"><i aria-hidden="true" class="fa-brands fa-android text-lg"></i> Download Android app ${icon('download','text-xs')}</a><p class="text-[11px] text-muted">Use Jangu Tugagawale on your Android phone.</p></section>`;}
-function guard(){if(!session||!cloudSession||!financialReady||session.id!==cloudSession.user.id)return false;const u=getUser(session.id);return !!u&&!u.banned&&!!u.consentAt&&(!session.admin||u.isAdmin===true);}
+function guard(){if(authUncertain||!session||!cloudSession||!financialReady||session.id!==cloudSession.user.id)return false;const u=getUser(session.id);return !!u&&!u.banned&&!!u.consentAt&&(!session.admin||u.isAdmin===true);}
 function renderSessionPending(){app.innerHTML=`<main class="flex min-h-screen items-center justify-center bg-ink p-6"><section role="status" aria-live="polite" class="w-full rounded-2xl border border-slate-200 bg-card p-8 text-center"><span class="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue">${icon('shield-halved')}</span><h1 class="mt-5 font-display text-2xl font-bold">Opening your dashboard</h1><p class="mt-3 text-sm leading-relaxed text-muted">Your sign-in is saved. Checking account permissions and loading the latest records.</p><div class="mt-6 flex flex-wrap justify-center gap-3">${btn('Retry connection','refresh')}${btn('Sign out','logout','border border-slate-200 text-white hover:bg-slate-50')}</div></section></main>`;}
 function cloudMessage(error){if(error?.code==='23505')return 'This phone number already has a verified account. Please log in.';const message=error?.message||'';if(error?.code==='login_rate_limited')return message||'Too many login attempts. Wait five minutes before trying again.';if(error?.code==='invalid_credentials'||/invalid login credentials/i.test(message))return 'Your login details do not match. Use your original registered phone number and password, or select Forgot password. If you have not finished registration, select Create Account.';if(error?.code==='otp_expired'||/token has expired or is invalid/i.test(message))return 'This email code is invalid or expired. Enter the newest 4-digit code, or request another when the resend timer finishes.';if(error?.status===429||/rate_limit/.test(error?.code||'')){const wait=message.match(/after\s+(\d+)\s+seconds/i)?.[1];return wait?'Please wait '+wait+' seconds before requesting another code.':'Too many attempts. Please wait before trying again; avoid repeated code requests.';}if(/failed to send a request to the edge function|functionsfetcherror|failed to fetch|fetch failed|networkerror|network request failed/i.test(message))return 'The connection was interrupted. Your entered details are still available. Try again. For login, you can also enter your registered email in Login help.';return message||'Unable to connect. Please try again.';}
 function connectionNotice(message=''){connectionIssue=message;const notice=document.getElementById('connectionNotice');notice.classList.toggle('hidden',!message||!session||!financialReady);document.getElementById('connectionNoticeText').textContent=message?'Connection interrupted. Showing last synced records; balances may have changed. '+message:'';}
-function renderConnectionError(message){document.getElementById('connectionNotice').classList.add('hidden');app.innerHTML=`<main class="flex min-h-screen items-center justify-center bg-ink px-5 py-10"><section class="w-full rounded-2xl border border-slate-200 bg-card p-7 sm:p-10"><div class="mb-8">${brand()}</div><h1 class="font-display text-2xl font-bold">Reconnect to open your dashboard</h1><p class="mt-3 text-sm leading-relaxed text-muted">Your sign-in is saved. We need to verify your account and load its latest records.</p><p role="alert" class="mt-5 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">${esc(message)}</p><div class="mt-6 flex flex-wrap gap-3">${btn('Retry connection','refresh')}${btn('Return to login','logout','border border-slate-200 text-white')}</div></section></main>`;}
+function renderConnectionError(message){if(session&&financialReady&&getUser(session.id)){connectionNotice(message);return;}document.getElementById('connectionNotice').classList.add('hidden');app.innerHTML=`<main class="flex min-h-screen items-center justify-center bg-ink px-5 py-10"><section class="w-full rounded-2xl border border-slate-200 bg-card p-7 sm:p-10"><div class="mb-8">${brand()}</div><h1 class="font-display text-2xl font-bold">Reconnect to open your dashboard</h1><p class="mt-3 text-sm leading-relaxed text-muted">Your sign-in is saved. We need to verify your account and load its latest records.</p><p role="alert" class="mt-5 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">${esc(message)}</p><div class="mt-6 flex flex-wrap gap-3">${btn('Retry connection','refresh')}${btn('Return to login','logout','border border-slate-200 text-white')}</div></section></main>`;}
 async function rpcCloud(name,params={}){const {data,error}=await cloud.rpc(name,params);if(error)throw error;return data;}
 async function invokeCloud(name,body,{publicAccess=false}={}){const client=publicAccess?publicCloud:cloud;const {data,error}=await client.functions.invoke(name,{body});if(error){let message=error.message,code=error.code||'',status=error.context?.status||0;if((window.supabase.FunctionsHttpError&&error instanceof window.supabase.FunctionsHttpError)||(error.context&&typeof error.context.text==='function')){try{const text=await error.context.text();try{const response=JSON.parse(text);message=response.error||text;code=response.code||code;}catch{message=text||message;}}catch{}}throw Object.assign(new Error(message||'Unable to connect. Please try again.'),{code,status});}if(data?.error)throw Object.assign(new Error(data.error),{code:data.code||''});return data;}
 async function loginWithEmail(phone,password,email){
@@ -134,10 +136,33 @@ db.products=snapshot.products.map(p=>({id:p.id,userId:p.user_id,paymentId:p.paym
 db.withdrawals=snapshot.withdrawals.map(w=>({id:w.id,userId:w.user_id,amount:Number(w.amount),tax:Number(w.charge),net:Number(w.net_to_pay),taxPercent:Number(w.charge_percent),network:w.network,phone:w.phone,name:w.name,status:w.status,submitted:Date.parse(w.submitted_at),reviewed:w.reviewed_at?Date.parse(w.reviewed_at):null}));
 db.referralCredits=snapshot.referralCredits||[];wallets=snapshot.wallets;financialReady=true;
 }
+// Reconcile with the SDK before changing screens. A missing local session or a
+// delayed SIGNED_OUT event is not proof that a newly established login is invalid.
+function invalidSessionError(error){return ['session_not_found','refresh_token_not_found','refresh_token_already_used','invalid_refresh_token','bad_jwt'].includes(error?.code);}
+async function stableAuthSession(){
+const generation=authGeneration,held=cloudSession;
+const assertCurrent=()=>{if(generation!==authGeneration)throw new Error('Account check superseded by a newer sign-in.');};
+const first=await cloud.auth.getSession();assertCurrent();
+if(first.error&&!invalidSessionError(first.error))throw first.error;
+if(!first.error&&first.data?.session)return first.data.session;
+if(!held){if(first.error)throw first.error;if(session&&financialReady)throw new Error('Reconnecting to your saved sign-in. Please retry.');return null;}
+authUncertain=true;
+const recovered=await cloud.auth.refreshSession({refresh_token:held.refresh_token});assertCurrent();
+if(!recovered.error&&recovered.data?.session)return recovered.data.session;
+if(recovered.error&&invalidSessionError(recovered.error)){
+// Another tab or the SDK may have rotated the token while this request was in flight.
+await new Promise(resolve=>setTimeout(resolve,500));assertCurrent();
+const latest=await cloud.auth.getSession();assertCurrent();
+if(!latest.error&&latest.data?.session)return latest.data.session;
+if(latest.error&&!invalidSessionError(latest.error))throw latest.error;
+throw Object.assign(new Error('Your saved session has expired. Log in again with your registered phone and password.'),{confirmedSessionLoss:true});
+}
+throw recovered.error||new Error('Reconnecting to your saved sign-in. Please retry.');
+}
 async function syncCloud(){
 if(syncTask)return syncTask;const generation=authGeneration;let syncingId=cloudSession?.user?.id||null;
 const task=(async()=>{try{
-const {data,error}=await cloud.auth.getSession();if(generation!==authGeneration)return false;if(error)throw error;cloudSession=data.session;
+const activeSession=await stableAuthSession();if(generation!==authGeneration)return false;cloudSession=activeSession;
 if(!cloudSession){session=null;clearFinancialState();connectionNotice();renderAuth();return true;}
 syncingId=cloudSession.user.id;
 if(recoveryVerified){session=null;clearFinancialState();connectionNotice();authMode='reset-verify';if(!document.getElementById('authForm'))renderAuth();return true;}
@@ -145,8 +170,18 @@ const accountId=syncingId;if(session&&session.id!==accountId){session=null;clear
 const [membersResult,adminRole]=await Promise.all([cloud.from('jtg_member_accounts').select('*'),rpcCloud('jtg_is_admin')]);
 if(generation!==authGeneration||cloudSession?.user?.id!==accountId)return false;
 if(membersResult.error)throw membersResult.error;if(typeof adminRole!=='boolean')throw new Error('Account permissions could not be verified. Please retry.');
-const rows=membersResult.data||[],own=rows.find(r=>r.user_id===accountId);
-if(!own){session=null;clearFinancialState();connectionNotice();if(!['reset','reset-verify'].includes(authMode)){if(cloudSession.user.email_confirmed_at){authMode='complete';ensureRegistrationDraft(cloudSession.user);}else authMode=signupDraft?.type==='signup'?'verify':'signup';}if(!document.getElementById('authForm')||!['verify','complete'].includes(authMode)||!modal.open)renderAuth();return true;}
+const rows=membersResult.data||[];let own=rows.find(r=>r.user_id===accountId);
+if(!own){
+// Verify a missing row directly before sending a genuinely unfinished account to setup.
+const check=await cloud.from('jtg_member_accounts').select('*').eq('user_id',accountId).maybeSingle();
+if(generation!==authGeneration||cloudSession?.user?.id!==accountId)return false;
+if(check.error)throw check.error;
+if(check.data){own=check.data;rows.push(own);}
+}
+if(!own){
+if(knownMemberId===accountId||session?.id===accountId&&financialReady)throw new Error('Your account records could not be loaded. Your sign-in is saved; retry the connection.');
+session=null;clearFinancialState();connectionNotice();if(!['reset','reset-verify'].includes(authMode)){if(cloudSession.user.email_confirmed_at){authMode='complete';ensureRegistrationDraft(cloudSession.user);}else authMode=signupDraft?.type==='signup'?'verify':'signup';}if(!document.getElementById('authForm')||!['verify','complete'].includes(authMode)||!modal.open)renderAuth();return true;
+}
 if(own.banned){authGeneration++;session=null;clearFinancialState();connectionNotice();authMode='login';const {error:outError}=await cloud.auth.signOut({scope:'local'});if(outError)console.error('Unable to revoke the local banned session.');cloudSession=null;modal.close();renderAuth();toast('You have been banned contact admin');return true;}
 const mapped=rows.map(mapMember),mine=mapped.find(u=>u.id===accountId);
 const [snapshot,limits,parentName]=await Promise.all([rpcCloud('jtg_financial_snapshot'),adminRole?Promise.resolve(null):rpcCloud('jtg_withdrawal_limits'),own.referrer_id?rpcCloud('jtg_my_referrer_name'):Promise.resolve(null)]);
@@ -154,21 +189,28 @@ if(generation!==authGeneration||cloudSession?.user?.id!==accountId)return false;
 if(own.referrer_id)mine.referrerName=parentName;mapped.forEach(member=>{member.isAdmin=member.id===accountId&&adminRole===true;});
 if(!adminRole&&(!limits||limits.minimumAmount!==minimumGrossWithdrawal||limits.minimumNet!==minimumWithdrawal||limits.dailyLimit!==dailyWithdrawalLimit||!Number.isInteger(limits.submittedToday)||limits.submittedToday<0||!Number.isInteger(limits.remainingToday)||limits.remainingToday!==Math.max(0,dailyWithdrawalLimit-limits.submittedToday)))throw new Error('Withdrawal limits could not be loaded. Please retry.');
 const before=JSON.stringify({db,wallets,withdrawalLimits}),newSession=!session||session.id!==accountId||session.admin!==adminRole;
-applyFinancialSnapshot(snapshot,accountId);db.users=mapped;withdrawalLimits=limits;session={id:accountId,admin:adminRole};rememberAccount(mine,cloudSession.user);
+applyFinancialSnapshot(snapshot,accountId);db.users=mapped;withdrawalLimits=limits;session={id:accountId,admin:adminRole};authUncertain=false;knownMemberId=accountId;authMode='dashboard';rememberAccount(mine,cloudSession.user);
 if(signupDraft?.email?.toLowerCase()===cloudSession.user.email?.toLowerCase()){signupDraft=null;storeDraft();}connectionNotice();
 if(newSession){restoreRoute(location.hash.slice(1),adminRole);filter='All';history.replaceState(null,'',location.pathname+location.search+'#'+routeHash());}
 if(newSession||before!==JSON.stringify({db,wallets,withdrawalLimits})||!app.children.length)render();syncWorkspace();return true;
 }catch(error){
 if(generation!==authGeneration)return false;const message=cloudMessage(error);
-if(['session_not_found','refresh_token_not_found','refresh_token_already_used','bad_jwt'].includes(error?.code)){authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();modal.close();authMode='login';renderAuth();toast('Your session has expired. Log in again with your registered phone and password.');return false;}
-if(cloudSession&&cloudSession.user.id===syncingId){connectionNotice(message);if(!session||session.id!==syncingId||!financialReady){session=null;clearFinancialState();renderConnectionError(message);}}
+// Only a server-rejected refresh, rechecked against the current SDK session,
+// may end a saved login. Network, balance and account-loading errors never do.
+if(error?.confirmedSessionLoss){authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();modal.close();authMode='login';renderAuth();toast(message);return false;}
+if(cloudSession||session&&financialReady){authUncertain=true;connectionNotice(message);if(!session||!financialReady)renderConnectionError(message);}
 else{session=null;clearFinancialState();connectionNotice();authMode='login';renderAuth();toast(message);}return false;
 }})();syncTask=task;try{return await task;}finally{if(syncTask===task)syncTask=null;}
 }
 async function resolveInvitation(code){if(!code)return null;const data=await rpcCloud('jtg_resolve_referral',{p_code:code});if(!data?.length)throw new Error('This referral code is not valid. Check it with the person who invited you.');return data[0];}
-function render(){if(!guard()){if(cloudSession&&!recoveryVerified&&!['verify','complete','reset-verify'].includes(authMode))return connectionIssue?renderConnectionError(connectionIssue):renderSessionPending();return renderAuth();}if(session.admin)renderAdmin();else renderUser();}
+function render(){if(!guard()){
+// Keep the last verified dashboard and its current page during reconnection.
+// guard() blocks account actions until a fresh server check succeeds.
+if(session&&financialReady&&getUser(session.id)&&!recoveryVerified){if(!app.children.length){if(session.admin)renderAdmin();else renderUser();}if(connectionIssue)connectionNotice(connectionIssue);return;}
+if(cloudSession&&!recoveryVerified&&!['verify','complete','reset-verify'].includes(authMode))return connectionIssue?renderConnectionError(connectionIssue):renderSessionPending();return renderAuth();}if(session.admin)renderAdmin();else renderUser();}
 // Existing email OTP + password registration and returning phone/password login.
 function renderAuth(){
+if(session&&financialReady&&getUser(session.id)&&!recoveryVerified){if(connectionIssue)connectionNotice(connectionIssue);return;}
 const signing=['signup','verify','complete'].includes(authMode),resetting=['reset','reset-verify'].includes(authMode),draft=signupDraft||{};
 const title=authMode==='landing'?'Your journey starts here':authMode==='login'?'Welcome back':authMode==='signup'?'Create your account':authMode==='verify'?'Verify your email':authMode==='complete'?'Complete your account':authMode==='reset'?'Reset your password':'Set a new password';
 const passwordFields=()=>field('Password','password','password','At least 6 characters','required autocomplete="new-password" minlength="6" maxlength="256"')+field('Confirm password','confirm','password','Re-enter your password','required autocomplete="new-password" minlength="6" maxlength="256"');
@@ -192,11 +234,15 @@ const fail=m=>{const target=document.getElementById('authError');if(target){targ
 authBusy=true;f.setAttribute('aria-busy','true');button.disabled=true;button.textContent=mode==='login'?'Logging in…':mode==='signup'||mode==='reset'?'Sending code…':'Saving account…';error.classList.add('hidden');
 try{
 if(mode==='login'){
+const loginGeneration=authGeneration;
 const phone=normalize(d.get('phone'));if(!/^0[37]\d{8}$/.test(phone))throw new Error('Enter a valid Ugandan mobile number.');
 const tokens=await authenticateAccount(phone,String(d.get('password')),d.get('email'));if(!tokens?.access_token||!tokens?.refresh_token)throw new Error('Login could not be completed. Please try again.');
-if(syncTask)await syncTask;authGeneration++;session=null;clearFinancialState();connectionNotice();
-const {data,error:loginError}=await cloud.auth.setSession({access_token:tokens.access_token,refresh_token:tokens.refresh_token});if(loginError)throw loginError;if(!data.session)throw new Error('Login could not be completed. Please try again.');
-cloudSession=data.session;recoveryVerified=false;route='home';rememberLoginPhone(phone);if(!tokens.pending_setup){signupDraft=null;storeDraft();}
+if(syncTask)await syncTask;if(loginGeneration!==authGeneration)throw new Error('This sign-in was cancelled by a newer account action. Please try again.');
+authGeneration++;const installedGeneration=authGeneration;session=null;clearFinancialState();connectionNotice();
+const {data,error:loginError}=await cloud.auth.setSession({access_token:tokens.access_token,refresh_token:tokens.refresh_token});
+if(installedGeneration!==authGeneration){await cloud.auth.signOut({scope:'local'});throw new Error('This sign-in was cancelled. Please try again.');}
+if(loginError)throw loginError;if(!data.session)throw new Error('Login could not be completed. Please try again.');
+cloudSession=data.session;knownMemberId=tokens.pending_setup===true?null:data.session.user.id;recoveryVerified=false;route='home';rememberLoginPhone(phone);if(!tokens.pending_setup){signupDraft=null;storeDraft();}
 history.replaceState(null,'',location.pathname+location.search);if(await syncCloud()){if(session){modal.close();route=session.admin?'overview':'home';history.replaceState(null,'',location.pathname+location.search+'#'+(session.admin?'admin/overview':'home'));render();}}return;
 }
 if(mode==='reset'){const email=String(d.get('email')).trim().toLowerCase();signupDraft={email,type:'reset',stage:'details'};storeDraft();await sendEmailCode(signupDraft);signupDraft.stage='verify';storeDraft();recoveryVerified=false;authMode='reset-verify';renderAuth();toast('Recovery code requested. Check your inbox and spam folder.');return;}
@@ -221,7 +267,7 @@ if(!cloudSession?.user?.email_confirmed_at||cloudSession.user.email?.toLowerCase
 const {error:passwordError}=await cloud.auth.updateUser({password:String(d.get('password')),data:{username:signupDraft.name,jtg_phone:signupDraft.phone,jtg_referral:signupDraft.referral||'',jtg_adult:signupDraft.adult===true}});
 if(passwordError&&passwordError.code!=='same_password'&&!/new password should be different from the old password/i.test(passwordError.message||''))throw passwordError;
 const registration={...signupDraft},newUser={phone:registration.phone,name:registration.name};authMode='complete';renderAuth();
-consentPopup(newUser,async()=>{if(authBusy)throw new Error('Please wait for the current account request to finish.');authBusy=true;try{await rpcCloud('jtg_register_member',{p_phone:registration.phone,p_name:registration.name,p_referral_code:registration.referral||null,p_consent_text:consentText});rememberLoginPhone(newUser.phone);signupDraft=null;storeDraft();incomingReferral='';inviterName='';try{localStorage.removeItem(REFERRAL_KEY);}catch{}const clean=new URL(location.href);clean.searchParams.delete('ref');clean.hash='home';history.replaceState(null,'',clean);modal.close();route='home';if(await syncCloud()){if(session){render();toast('Account created. Use your registered phone number and password to log in next time.');}}}finally{authBusy=false;}});return;
+consentPopup(newUser,async()=>{if(authBusy)throw new Error('Please wait for the current account request to finish.');authBusy=true;try{await rpcCloud('jtg_register_member',{p_phone:registration.phone,p_name:registration.name,p_referral_code:registration.referral||null,p_consent_text:consentText});knownMemberId=cloudSession?.user?.id||null;rememberLoginPhone(newUser.phone);signupDraft=null;storeDraft();incomingReferral='';inviterName='';try{localStorage.removeItem(REFERRAL_KEY);}catch{}const clean=new URL(location.href);clean.searchParams.delete('ref');clean.hash='home';history.replaceState(null,'',clean);modal.close();route='home';if(await syncCloud()){if(session){render();toast('Account created. Use your registered phone number and password to log in next time.');}}}finally{authBusy=false;}});return;
 }
 }catch(err){if(mode==='login'&&loginConnectionError(err)){const help=f.querySelector('[data-login-help]');if(help)help.open=true;}if(mode==='verify'&&authMode==='complete'&&cloudSession)renderAuth();if(mode==='reset-verify'&&recoveryVerified)renderAuth();fail(cloudMessage(err));}
 finally{authBusy=false;f.removeAttribute('aria-busy');if(button.isConnected){button.disabled=false;button.innerHTML=originalLabel;}updateOtpControls();}
@@ -328,7 +374,7 @@ if(a==='open-care'){modal.close();navigate('customer-care');return;}
 if(a==='care-refresh'){if(workspaceTask)await workspaceTask;await syncWorkspace();return;}
 if(a.startsWith('auth-')){if(authBusy)return;const next=a.slice(5);if(!['landing','login','signup','reset'].includes(next))return;if(next==='signup'&&document.getElementById('authForm')?.elements.email&&signupDraft?.type==='signup'){signupDraft.email=document.getElementById('authForm').elements.email.value.trim().toLowerCase();storeDraft();}if(recoveryVerified){authBusy=true;b.disabled=true;try{const {error}=await cloud.auth.signOut({scope:'local'});if(error)throw error;authGeneration++;cloudSession=null;session=null;clearFinancialState();connectionNotice();recoveryVerified=false;}catch(error){toast(cloudMessage(error));return;}finally{authBusy=false;if(b.isConnected)b.disabled=false;}}if(signupDraft?.type==='reset'&&next!=='reset'){signupDraft=null;storeDraft();}authMode=next;renderAuth();return;}
 if(a==='resend-otp'){if(authBusy||!signupDraft?.email)return;authBusy=true;b.disabled=true;try{await sendEmailCode(signupDraft);signupDraft.stage='verify';storeDraft();const otp=document.getElementById('authForm')?.elements.otp;if(otp)otp.value='';toast('New code requested. Check inbox and spam; use the newest email.');}catch(error){toast(cloudMessage(error));}finally{authBusy=false;updateOtpControls();}return;}
-if(a==='logout'){if(authBusy)return;authBusy=true;b.disabled=true;try{const {error}=await cloud.auth.signOut({scope:'local'});if(error)throw error;authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();recoveryVerified=false;signupDraft=null;storeDraft();route='home';authMode='login';history.replaceState(null,'',location.pathname+location.search);modal.close();renderAuth();}catch(error){toast(cloudMessage(error));}finally{authBusy=false;if(b.isConnected)b.disabled=false;}return;}
+if(a==='logout'){if(authBusy)return;authBusy=true;b.disabled=true;try{const {error}=await cloud.auth.signOut({scope:'local'});if(error)throw error;try{localStorage.setItem(EXPLICIT_LOGOUT_KEY,Date.now()+':'+Math.random());}catch{}authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();recoveryVerified=false;signupDraft=null;storeDraft();route='home';authMode='login';history.replaceState(null,'',location.pathname+location.search);modal.close();renderAuth();}catch(error){toast(cloudMessage(error));}finally{authBusy=false;if(b.isConnected)b.disabled=false;}return;}
 if(a==='refresh'||a==='run-income'){if(a==='run-income'&&(!guard()||!session.admin))return;b.disabled=true;try{if(await syncCloud()){render();await syncWorkspace();toast(a==='run-income'?'Income refreshed. Completed compound credits counted once.':'Balances and requests refreshed.');}else toast(connectionIssue||'Unable to refresh. Check your connection and try again.');}finally{if(b.isConnected)b.disabled=false;}return;}
 if(!guard()||session.admin)return;
 if(a==='about-us')return aboutUs();if(a==='earnings-guide')return earningsGuide();if(a==='copy-referral')return copyReferral();if(a==='share-referral')return shareReferral();if(a==='daily-check')return dailyCheck();if(a==='rules')return showRules();
@@ -342,14 +388,25 @@ setInterval(()=>{if(guard()&&document.visibilityState==='visible'&&!authBusy)syn
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&mayRefresh()){syncCloud();syncWorkspace();updateCareDom();}});
 window.addEventListener('online',()=>{if(mayRefresh()){syncCloud();syncWorkspace();}});
 window.addEventListener('offline',()=>{if(session)connectionNotice('You are offline. Reconnect to load the latest records.');});
-// Queued events from an older sign-out must never clear a newer administrator sign-in.
+// Explicit logout is honored across tabs; automatic or delayed SDK events instead
+// reconcile through the same single-flight session check used by dashboard polling.
+window.addEventListener('storage',event=>{
+if(event.key!==EXPLICIT_LOGOUT_KEY||!event.newValue||!cloudSession&&!session)return;
+authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();recoveryVerified=false;signupDraft=null;storeDraft();authMode='login';modal.close();history.replaceState(null,'',location.pathname+location.search);renderAuth();
+cloud.auth.signOut({scope:'local'}).then(({error})=>{if(error)console.warn('Unable to clear the signed-out session:',error.message);}).catch(()=>{});
+});
 cloud.auth.onAuthStateChange((event,active)=>{if(event==='INITIAL_SESSION')return;const eventGeneration=authGeneration;setTimeout(async()=>{
 if(authBusy||eventGeneration!==authGeneration)return;
 try{
 if(event==='PASSWORD_RECOVERY'&&active){authGeneration++;cloudSession=active;recoveryVerified=true;session=null;clearFinancialState();connectionNotice();modal.close();authMode='reset-verify';signupDraft={email:active.user.email,type:'reset'};storeDraft();renderAuth();return;}
-if(event==='SIGNED_OUT'){const {data,error}=await cloud.auth.getSession();if(eventGeneration!==authGeneration||authBusy)return;if(error)throw error;if(data.session){cloudSession=data.session;if(!modal.open&&!recoveryVerified)await syncCloud();return;}authGeneration++;session=null;cloudSession=null;clearFinancialState();connectionNotice();recoveryVerified=false;modal.close();authMode='login';history.replaceState(null,'',location.pathname+location.search);renderAuth();return;}
-if(['SIGNED_IN','TOKEN_REFRESHED','USER_UPDATED'].includes(event)){const {data,error}=await cloud.auth.getSession();if(eventGeneration!==authGeneration||authBusy)return;if(error)throw error;if(!data.session||active&&data.session.user.id!==active.user.id)return;cloudSession=data.session;if(modal.open||recoveryVerified)return;if(event==='TOKEN_REFRESHED'&&!session&&!connectionIssue)return;await syncCloud();}
-}catch(error){const message=cloudMessage(error);if(cloudSession){connectionNotice(message);if(!session||!financialReady)renderConnectionError(message);}else toast(message);}
+if(['SIGNED_OUT','SIGNED_IN','TOKEN_REFRESHED','USER_UPDATED'].includes(event)){
+if(modal.open||recoveryVerified)return;
+// Never navigate to login just because a queued event carried a null session.
+// syncCloud reads the current SDK state, recovers a saved session if needed,
+// and retains both member/admin routing and cached records during outages.
+await syncCloud();
+}
+}catch(error){if(eventGeneration!==authGeneration)return;const message=cloudMessage(error);if(cloudSession||session&&financialReady){authUncertain=true;connectionNotice(message);if(!session||!financialReady)renderConnectionError(message);}else toast(message);}
 },0);});
 async function initialize(){app.innerHTML=`<main class="m-0 flex min-h-screen w-full items-center justify-center bg-ink"><div role="status" class="text-center"><span class="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue">${icon('shield-halved')}</span><p class="text-sm font-semibold">Checking your account…</p></div></main>`;if(incomingReferral){authMode='signup';try{const invitation=await resolveInvitation(incomingReferral);inviterName=invitation.name;}catch(error){toast(cloudMessage(error));}}else if(signupDraft?.type==='signup')authMode=signupDraft.stage==='details'?'signup':'verify';else if(signupDraft?.type==='reset')authMode=signupDraft.stage==='details'?'reset':'reset-verify';const params=new URLSearchParams(location.search);if(params.get('error')==='access_denied'){toast('Login was cancelled. Please try again.');params.delete('error');params.delete('error_description');history.replaceState(null,'',location.pathname+(params.toString()?'?'+params.toString():'')+location.hash);}await syncCloud();applyHash();}
 initialize();
@@ -359,7 +416,9 @@ window.addEventListener('load',()=>{if(!document.getElementById('appLoadFinished
 
 <script>window.onload=function(){var d=document.createElement("div");d.id="appLoadFinished";document.body.appendChild(d);};</script>
 <script>window.onload=function(){var d=document.createElement("div");d.id="appLoadFinished";document.body.appendChild(d);};</script>
+<script>window.onload=function(){var d=document.createElement("div");d.id="appLoadFinished";document.body.appendChild(d);};</script>
 </body>
+
 
 
 
